@@ -21,7 +21,7 @@
 
 #pragma once
 
-#ifndef __MOTR_FDMI_PLUGINS_SCHED_H__
+#ifndef __MOTR_FDMI_PLUGINS_FDMI_PLUGIN_SAMPLE_H__
 #define __MOTR_FDMI_PLUGINS_SCHED_H__
 
 #include "fid/fid.h"
@@ -42,14 +42,14 @@
 #include <fcntl.h>
 #include <stdio.h>
 
-/* sched client conf params */
-struct sched_conf {
-	char          *local_addr;
-	char          *ha_addr;
-	char          *profile_fid;
-	char          *process_fid;
-	char          *fdmi_plugin_fid_s;
-	struct m0_fid  fdmi_plugin_fid;
-} c_params;
+/* Plugin sample conf params */
+struct m0_fsp_params {
+	char          *spp_local_addr;
+	char          *spp_hare_addr;
+	char          *spp_profile_fid;
+	char          *spp_process_fid;
+	char          *spp_fdmi_plugin_fid_s;
+	struct m0_fid  spp_fdmi_plugin_fid;
+};
 
-#endif /*  __MOTR_FDMI_PLUGINS_SCHED_H__ */
+#endif /*  __MOTR_FDMI_PLUGINS_FDMI_PLUGIN_SAMPLE_H__ */

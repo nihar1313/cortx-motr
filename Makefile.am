@@ -842,13 +842,13 @@ ha_m0ham_CPPFLAGS  = -DM0_TARGET='m0ham' $(AM_CPPFLAGS)
 ha_m0ham_LDADD     = $(top_builddir)/motr/libmotr.la
 
 #
-# fdmi/plugins/m0sched -------------------------------------------- {{{2
+# fdmi/plugins/fdmi_sample_plugin --------------------- {{{2
 #
 
-sbin_PROGRAMS     += fdmi/plugins/m0sched
-sbin_SCRIPTS     += fdmi/plugins/m0scheduler
-fdmi_plugins_m0sched_CPPFLAGS  = -DM0_TARGET='m0sched' $(AM_CPPFLAGS)
-fdmi_plugins_m0sched_LDADD     = $(top_builddir)/motr/libmotr.la
+sbin_PROGRAMS     += fdmi/plugins/fdmi_sample_plugin
+sbin_SCRIPTS     += fdmi/plugins/fdmi_app
+fdmi_plugins_fdmi_sample_plugin_CPPFLAGS  = -DM0_TARGET='fdmi_sample_plugin' $(AM_CPPFLAGS)
+fdmi_plugins_fdmi_sample_plugin_LDADD     = $(top_builddir)/motr/libmotr.la
 
 #
 # pool/m0poolmach ------------------------------------- {{{2

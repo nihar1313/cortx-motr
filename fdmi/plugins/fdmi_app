@@ -18,13 +18,17 @@
 # please email opensource@seagate.com or cortx-questions@seagate.com.
 #
 
-# This is FDMI plugin sample app wrapper that serves as a scheduler
-# for the FDMI records. It gathers that cluster infp using Hare hctl
-# tool, forks m0sched program and waits for records delivered by it.
+# This is the FDMI sample application. It serves as a hub for the FDMI
+# records delivered fdmi_sample_plugin C-program via stdout. To do so
+# it gathers the cluster configuration with 'hctl status' command,
+# forks fdmi_sample_plugin and waits for the FDMI events in JSON form.
+# The reason to use it is simply because it is much easier to parse data
+# and develop new features in python in compare to C.
+
 # For now it is just a demo that prints FDMI records to console, but
-# later it can perform records de-dup and replication coordination by
-# means of set of the replication python programs that perform actual
-# data move.
+# except this it can perform records de-dup and for example, replication
+# coordination by means of set of the replication python programs that
+# perform actual data move.
 
 import subprocess
 import signal
@@ -33,9 +37,17 @@ import sys
 import json
 import codecs
 
-cluster_info = dict()  # global cluster info
-kv_records = []        # global kv cache
-processes = []         # global list if m0sched processes
+# Global cluster info including information required for running
+# fdmi_sample_plugin C-program.
+cluster_info = dict()
+
+# Global key-value cache used for records de-duplication. KV pairs
+# are available by the kv['cr_key']
+kv_records = dict()
+
+# Global list of fdmi_sample_plugin processes that this program
+# is communicating.
+processes = []
 
 
 def str_decode(encoded):
@@ -43,11 +55,13 @@ def str_decode(encoded):
         return None
     if encoded == '0':
         return encoded
-    # return codecs.decode(encoded, 'hex').decode('utf-8')
     return codecs.decode(encoded, 'hex')
 
 
-def json_parser(kv_record):
+# Process the FDMI records in form of JSON and perform some useful actions
+# such as de-dup, logging and/or sending to the replicator program for data
+# move.
+def process_fdmi_record(kv_record):
     kvs = json.loads(kv_record)
     fid = str_decode(kvs.get('fid'))
     if fid is None:
@@ -66,32 +80,23 @@ def json_parser(kv_record):
         'cr_key': cr_key,
         'cr_val': cr_val
     }
-    # kv = {'fid': kvs["fid"], 'cr_key': kvs["cr_key"], 'cr_val': kvs["cr_val"]}
-    flag = True
 
-    # check dedup records
-    for kv_i in kv_records:
-        if kv['cr_key'] == kv_i['cr_key'] and kv['cr_val'] != "0":
-            # print(kv_records)
-            print('dedup: {} {}'.format(kv_i, kv), file=sys.stderr)
-            flag = False
-            break
-
-    # if record is not dedupable, add to cache
-    if flag and kv['cr_val'] != "0":
-        print('new kv: {}'.format(kv), file=sys.stderr)
-        kv_records.append(kv)
+    # Check de-dup records
+    kv_i = kv_records.get(cr_key)
+    if kv_i is not None and kv['cr_val'] != "0":
+        print('de-dup: {} {}'.format(kv_i, kv), file=sys.stderr)
+    elif kv['cr_val'] != "0":
+        print('new key-value: {}'.format(kv), file=sys.stderr)
+        kv_records['cr_key'] = kv
 
 
-# handle SIGNT and SIGTERM
+# Handle SIGNT and SIGTERM. Stop the underlying processes and exit.
 def signal_handler(sig, frame):
     print('CTRL + C pressed', file=sys.stderr)
-    print('Stopping all m0sched processes...')
+    print('Stopping all fdmi_sample_plugin processes...')
     for p in processes:
         p.send_signal(sig)
         p.wait()
-
-    # print(kv_records)
     sys.exit(0)
 
 
@@ -105,18 +110,21 @@ def execute_command_and_get_output(cmd):
     return output_var
 
 
-# m0sched -l 192.168.52.53@tcp:12345:4:1 -h 192.168.52.53@tcp:12345:1:1 -p 0x7000000000000001:0x37
-# -f 0x7200000000000001:0x19
-def get_scheduler_cmd(args):
-    # m0sched = "/home/931442/cortx-motr/fdmi/plugins/m0sched"
-    m0sched = args.scheduler_path
-    opts = " -l " + cluster_info['local_endpoint'] + " -h " + cluster_info['ha_endpoint'] + \
-           " -p " + cluster_info['profile_fid'] + " -f " + cluster_info['process_fid'] + " -g " + \
-           cluster_info['fdmi_filter_fid']
-    return m0sched + opts
+# fdmi_sample_plugin -l 192.168.52.53@tcp:12345:4:1 -h 192.168.52.53@tcp:12345:1:1
+# -p 0x7000000000000001:0x37 -f 0x7200000000000001:0x19 -g 0x6c0000000000000181
+def get_plugin_cmd(args):
+    # fdmi_sample_plugin = "/path/to/cortx-motr/fdmi/plugins/fdmi_sample_plugin"
+    opts = " -l " + cluster_info['local_endpoint']
+    opts += " -h " + cluster_info['ha_endpoint']
+    opts += " -p " + cluster_info['profile_fid']
+    opts += " -f " + cluster_info['process_fid']
+    opts += " -g " + cluster_info['fdmi_filter_fid']
+    return args.plugin_path + opts
 
 
-# get local ep, ha ep, profile fid and process fid
+# Gather the cluster info with 'hctl status --json' command, which is
+# need for running fdmi_sample_plugin. In case that --filter-id is omitted
+# then parse /etc/motr/confd.xc to find the filter-id for fdmi_sample_plugin
 def get_cluster_info(args):
     info = dict()
     cmd = '{} status --json'.format(args.hctl_path)
@@ -163,7 +171,7 @@ def get_cluster_info(args):
             print('Invalid nodes/svcs/name in cluster info:\n{}'.format(cluster_js), file=sys.stderr)
             return None
 
-        # m0sched alway uses first m0client
+        # Always using the first m0client
         if svc_name == 'm0_client':
             local_endpoint = str(svc.get('ep'))
             if local_endpoint is None or len(local_endpoint) == 0:
@@ -183,7 +191,7 @@ def get_cluster_info(args):
     if args.filter_id is None:
         with open(args.config_path) as f:
             for s in f.readlines():
-                # example: ' {0x6c| ((^l|1:81), 2, ^l|1:81, "", ^n|1:3, ^v|1:66, [1: "Bucket-Name"],
+                # Example: ' {0x6c| ((^l|1:81), 2, ^l|1:81, "", ^n|1:3, ^v|1:66, [1: "Bucket-Name"],
                 # [1: "192.168.12.2@tcp:12345:4:1"])},'
                 if s.startswith(' {0x6c| ((^l|'):
                     s = s[15:]
@@ -227,11 +235,11 @@ def listen_on_command(command):
             fid = "fid"
             record = output.decode("utf-8")
             if fid in record:
-                json_parser(record)
+                process_fdmi_record(record)
 
         rc = p.poll()
         if rc is not None:
-            print('Exiting because m0sched exited with:', file=sys.stderr)
+            print('Exiting because fdmi_sample_plugin exited with:', file=sys.stderr)
             print('  error code = {}'.format(rc), file=sys.stderr)
             _, error = p.communicate()
             if error is not None:
@@ -245,14 +253,23 @@ def listen_on_command(command):
 
 def main(args):
     global cluster_info
-
     einval = 22
+
+    # Filter id is used by Motr FDMI subsystem for identifying the
+    # FDMI plugins, because there are possible more than one.
+    # If the --filter-id is omitted then this program is looking
+    # for the corrct filter id in /etc/motr/confd.xc config file.
+
+    # Example: ' {0x6c| ((^l|1:81), 2, ^l|1:81, "", ^n|1:3, ^v|1:66, [1: "Bucket-Name"],
+    # [1: "192.168.12.2@tcp:12345:4:1"])},'
+
+    # The fid we need is 0x6c0000000000000181 in this particular example.
     if args.config_path is None and args.filter_id is None:
-        print('One of two --config-path or --filter-id is required.', file=sys.stderr)
+        print('Either --config-path or --filter-id is required.', file=sys.stderr)
         sys.exit(einval)
 
     print('Using the following settings:', file=sys.stderr)
-    print('  scheduler-path = {}'.format(args.scheduler_path), file=sys.stderr)
+    print('  plugin-path = {}'.format(args.plugin_path), file=sys.stderr)
     print('  hctl-path = {}'.format(args.hctl_path), file=sys.stderr)
 
     config_path = args.config_path
@@ -273,17 +290,18 @@ def main(args):
     if cluster_info is None:
         sys.exit(einval)
 
-    # Execute m0sched with cluster info in loop and wait for
-    # metadata in the records.
-    listen_on_command(get_scheduler_cmd(args))
+    # Execute fdmi_sample_plugin with cluster info in loop and wait for
+    # the FDMI events in form of JSON metadata.
+    listen_on_command(get_plugin_cmd(args))
 
 
 if __name__ == '__main__':
     import argparse
 
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('-sp', '--scheduler-path', required=False, help='path to m0sched executable',
-                    type=str, default='./m0sched')
+    ap.add_argument('-pp', '--plugin-path', required=False,
+                    help='path to fdmi_sample_plugin executable',
+                    type=str, default='./fdmi_sample_plugin')
     ap.add_argument('-hp', '--hctl-path', required=False, help='path to hctl executable',
                     type=str, default='hctl')
     ap.add_argument('-cp', '--config-path', required=False, help='path to confd.xc file',
