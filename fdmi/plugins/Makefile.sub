@@ -1,3 +1,2 @@
-nobase_motr_include_HEADERS += fdmi/plugins/fdmi_sample_plugin.h
 fdmi_plugins_fdmi_sample_plugin_SOURCES = fdmi/plugins/fdmi_sample_plugin.c
 EXTRA_DIST	+= fdmi/plugins/fdmi_app

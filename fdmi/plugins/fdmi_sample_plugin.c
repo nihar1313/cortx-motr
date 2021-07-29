@@ -22,9 +22,36 @@
 #define M0_TRACE_SUBSYSTEM M0_TRACE_SUBSYS_FDMI
 #include "lib/trace.h"
 
+#include "fid/fid.h"
+#include "motr/client.h"
+#include "motr/client_internal.h"
+#include "lib/getopts.h"	/* M0_GETOPTS */
+#include "lib/trace.h"
+#include "fdmi/fdmi.h"
+#include "fdmi/plugin_dock.h"
+#include "fdmi/service.h"
+#include "reqh/reqh.h"
+#include "ut/ut.h"
+
 #include <unistd.h>
+#include <getopt.h>
+#include <errno.h>
+#include <stddef.h>             /* ptrdiff_t */
 #include <fcntl.h>
-#include "fdmi/plugins/fdmi_sample_plugin.h"
+#include <stdio.h>
+
+/**
+ * Plugin sample conf params. Here _fsp means "fdmi sample plugin"
+ * and _spp - "sample plugin params".
+ */
+struct m0_fsp_params {
+	char          *spp_local_addr;
+	char          *spp_hare_addr;
+	char          *spp_profile_fid;
+	char          *spp_process_fid;
+	char          *spp_fdmi_plugin_fid_s;
+	struct m0_fid  spp_fdmi_plugin_fid;
+};
 
 /**
  * This is the FDMI plugin program. Its purpose is to start the listener
@@ -86,7 +113,7 @@ static struct m0_reqh_service *fsp_fdmi_service = NULL;
 static char buffer[MAX_LEN];
 
 
-M0_INTERNAL char *to_hex(void *addr, int len)
+static char *to_hex(void *addr, int len)
 {
 	int i, j;
 	if ((2 * len) > MAX_LEN) {
@@ -99,7 +126,7 @@ M0_INTERNAL char *to_hex(void *addr, int len)
 	return buffer;
 }
 
-M0_INTERNAL void m0_dump_m0_fol_rec_to_json(struct m0_fol_rec *rec)
+static void dump_fol_rec_to_json(struct m0_fol_rec *rec)
 {
 	struct m0_fol_frag *frag;
 	int i;
@@ -144,7 +171,7 @@ static void fsp_usage(void)
 		"-g fdmi_plugin_fid\n"
 		"Use -? or -i for more verbose help on common arguments.\n"
 		"Usage example for common arguments: \n"
-		"fdmi_sample_pluginm0sched -l 192.168.52.53@tcp:12345:4:1 "
+		"fdmi_sample_plugin -l 192.168.52.53@tcp:12345:4:1 "
 		"-h 192.168.52.53@tcp:12345:1:1 "
 		"-p 0x7000000000000001:0x37 -f 0x7200000000000001:0x19"
 		"-g 0x6c00000000000001:0x51"
@@ -197,7 +224,7 @@ static int fsp_args_parse(struct m0_fsp_params *params, int argc, char ** argv)
 		return M0_ERR(rc);
 
         /* All mandatory params must be defined. */
-	if (rc == 0 &&
+        if (rc == 0 &&
 	    (params->spp_local_addr == NULL || params->spp_hare_addr == NULL ||
 	     params->spp_profile_fid == NULL || params->spp_process_fid == NULL ||
 	     params->spp_fdmi_plugin_fid_s == NULL)) {
@@ -223,12 +250,16 @@ static int process_fdmi_record(struct m0_uint128 *rec_id,
 		   	       struct m0_fid filter_id)
 {
 	struct m0_fol_rec fol_rec;
+	int               rc;
 
 	m0_fol_rec_init(&fol_rec, NULL);
-	m0_fol_rec_decode(&fol_rec, &fdmi_rec);
-	m0_dump_m0_fol_rec_to_json(&fol_rec);
+	rc = m0_fol_rec_decode(&fol_rec, &fdmi_rec);
+	if (rc != 0)
+		goto out;
+	dump_fol_rec_to_json(&fol_rec);
+out:
 	m0_fol_rec_fini(&fol_rec);
-	return 0;
+	return rc;
 }
 
 static int fdmi_service_start(struct m0_client *m0c)
@@ -268,14 +299,13 @@ static void fdmi_service_stop(void)
 
 static int init_fdmi_plugin(struct m0_fsp_params *params)
 {
-	int rc;
-
-	fsp_pdo = m0_fdmi_plugin_dock_api_get();
-	const struct m0_fdmi_filter_desc fd;
-
 	const static struct m0_fdmi_plugin_ops pcb = {
 		.po_fdmi_rec = process_fdmi_record
 	};
+	const struct m0_fdmi_filter_desc fd;
+	int rc;
+
+	fsp_pdo = m0_fdmi_plugin_dock_api_get();
 
 	rc = fsp_pdo->fpo_register_filter(&params->spp_fdmi_plugin_fid, &fd, &pcb);
 	fprintf(stderr, "Plugin registration failed: rc=%d\n", rc);
